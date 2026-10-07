@@ -23,6 +23,7 @@ Kabil-Voice-Assistant/
 ├── data/            # Raw audio, processed datasets, and metadata
 ├── docs/            # Architecture diagrams, API specs, and project guidelines
 ├── embedded/        # Edge AI deployments (ESP32, Raspberry Pi, TFLite models)
+├── frontend/        # Custom web UI dashboards (e.g., dataset review audio player)
 ├── models/          # Model weights and configs (ASR, TTS, NLP)
 └── scripts/         # Utility scripts for data collection and training pipelines
 ```

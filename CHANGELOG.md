@@ -23,6 +23,10 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
   - **Tab 2 (Data Dashboard):** Allows users to review all previously saved sentences, play back the audio, and overwrite recordings.
   - Added full support for processing browser-trimmed audio arrays via `scipy.io.wavfile`.
   - Implemented `allowed_paths` to comply with strict Gradio 4 local file-serving security policies.
-
+  - Implemented URL query parameter parsing (`?id=X`) to support deep-linking directly to specific recordings in the Review tab.
+- **Custom Frontend UI:**
+  - `frontend/index.html`: Created a responsive, dark-mode Tailwind CSS interface for reviewing paginated recorded audio.
+  - Implemented a custom multi-mode audio player (`off`, `play-all`, `repeat-one`, `shuffle`) defaulting to single-play mode.
+  - Added an "Edit" deep-link button mapping UI elements directly to the Gradio backend for seamless re-recording workflows.
 ### Changed
 - Refined `app.py` audio normalization to use peak normalization to help mitigate low microphone volume without introducing unstable external dependencies.

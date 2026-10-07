@@ -153,12 +153,28 @@ def overwrite_audio(choice, new_audio):
         return f"Error: {str(e)}"
     return "Failed to overwrite."
 
+def load_from_url(request: gr.Request):
+    # Parse "?id=X" from the query params if available
+    if request and hasattr(request, 'query_params'):
+        item_id = request.query_params.get("id")
+        if item_id is not None:
+            try:
+                idx = int(item_id)
+                choices = get_sentence_choices()
+                if idx < len(choices):
+                    # Switch to tab-2 and select the given choice
+                    return gr.update(selected="tab-2"), gr.update(value=choices[idx], choices=choices)
+            except ValueError:
+                pass
+    # Default behavior if no id or invalid id: stay on tab-1
+    return gr.update(selected="tab-1"), gr.update(choices=get_sentence_choices())
+
 # --- UI ---
 with gr.Blocks(title="Kabil Data Collector") as demo:
     gr.Markdown("# 🎙️ Kabil Audio Data Collection")
     
-    with gr.Tabs():
-        with gr.TabItem("1. Record New Sentences"):
+    with gr.Tabs() as tabs:
+        with gr.TabItem("1. Record New Sentences", id="tab-1"):
             gr.Markdown("Read the sentence below out loud and hit record. Audio is automatically normalized (volume boosted) upon saving.")
             sentence_display = gr.Markdown(get_current_sentence_display())
             with gr.Row():
@@ -173,7 +189,7 @@ with gr.Blocks(title="Kabil Data Collector") as demo:
             submit_btn.click(fn=save_new_audio, inputs=[audio_input], outputs=[status_text, sentence_display, last_audio_playback]).then(fn=lambda: None, inputs=None, outputs=[audio_input])
             skip_btn.click(fn=skip_sentence, inputs=None, outputs=[status_text, sentence_display, last_audio_playback])
             
-        with gr.TabItem("2. Review & Re-record"):
+        with gr.TabItem("2. Review & Re-record", id="tab-2"):
             gr.Markdown("Select a previously recorded sentence to listen to it, or record a new version to overwrite it.")
             
             refresh_btn = gr.Button("Refresh List")
@@ -190,6 +206,8 @@ with gr.Blocks(title="Kabil Data Collector") as demo:
             refresh_btn.click(fn=lambda: gr.update(choices=get_sentence_choices()), inputs=None, outputs=[sentence_dropdown])
             sentence_dropdown.change(fn=load_selected_sentence, inputs=[sentence_dropdown], outputs=[existing_audio_playback, review_status])
             overwrite_btn.click(fn=overwrite_audio, inputs=[sentence_dropdown, rerecord_input], outputs=[review_status]).then(fn=lambda: None, inputs=None, outputs=[rerecord_input]).then(fn=load_selected_sentence, inputs=[sentence_dropdown], outputs=[existing_audio_playback, review_status])
+            
+    demo.load(fn=load_from_url, inputs=None, outputs=[tabs, sentence_dropdown])
 
 if __name__ == "__main__":
     print("Starting Kabil Data Collector...")
