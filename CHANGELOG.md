@@ -4,6 +4,16 @@ All notable changes to the **Kabil - Chakma and Pali Voice Assistant** project w
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/), and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [v0.1.1-alpha] - 2026-10-07
+
+### Added
+- **Global TTS UI Panel**: Added a unified, native-looking TTS generation panel (Language, Gender, and Actions) to both the "Record New Sentences" and "Review & Re-record" tabs.
+- **Auto-Load Generated Audio**: In the Review tab, automatically loading generated TTS speech into the record buffer allows reviewers to instantly overwrite old audio with high-quality synthesized speech.
+
+### Fixed
+- **Chakma Script TTS Crashes**: Resolved a critical issue where passing native Chakma Unicode (𑄃𑄎𑄴𑄠𑄧) directly to Microsoft Edge TTS caused silent WebSocket failures. The system now parses and passes the Bangla transliteration string, allowing seamless generation.
+- **Windows Encoding Crashes**: Prevented Gradio server crashes on Windows environments caused by `cp1252` encoding failures when printing Chakma characters to the terminal.
+
 ## [v0.1.0-alpha] - 2026-10-06
 
 ### Added
