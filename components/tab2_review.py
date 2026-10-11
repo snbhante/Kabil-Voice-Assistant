@@ -20,53 +20,70 @@ def get_edge_tts_voice(voice_type, gender):
         return "hi-IN-SwaraNeural" if gender == "Female" else "hi-IN-MadhurNeural"
     return "bn-BD-NabanitaNeural"
 
-def generate_tts_audio_file_review(transcript, voice_type, gender):
+def generate_tts_audio_file_review(transcript, voice_type, gender, language_hint=None):
     if not transcript:
         raise Exception("Transcript is empty.")
     
     tts_text = transcript
-    if "Chakma" in voice_type or "Bangla" in voice_type or "Bengali" in voice_type:
-        for cat_name, sents in state.sentences_by_category.items():
-            for t, c in sents:
-                if t == transcript:
-                    if c and c.startswith("(") and "|" in c:
-                        tts_text = c.split("|")[0].replace("(", "").strip()
-                    break
+    found_context = None
+
+    import unicodedata
+    def _norm(s):
+        return unicodedata.normalize('NFC', s.replace(" ", "").strip())
+
+    trans_norm = _norm(transcript)
+
+    # Search for context corresponding to this transcript
+    for cat_name, sents in state.sentences_by_category.items():
+        for t, c in sents:
+            if t.strip() == transcript.strip() or _norm(t) == trans_norm:
+                found_context = c
+                break
+        if found_context:
+            break
+
+    # If voice is Bengali or Chakma, check for Bengali transliteration
+    if "Bangla" in voice_type or "Chakma" in voice_type or "Bengali" in voice_type:
+        if found_context and "(" in found_context and "|" in found_context:
+            tts_text = found_context.split("|")[0].replace("(", "").strip()
+    elif "English" in voice_type:
+        # If the transcript itself is not English (e.g. Chakma/Bengali/Pali script), use English translation if available
+        if found_context and "—" in found_context:
+            tts_text = found_context.split("—")[-1].strip()
+    elif "Pali" in voice_type:
+        # For Pali, Sinhala or Hindi voices can read Pali Latin or Sinhala text
+        if found_context and "(" in found_context and "|" in found_context:
+            # Often first part in parenthesis is Bengali or Romanized Pali
+            pass
 
     voice_id = get_edge_tts_voice(voice_type, gender)
-    filename = f"tts_sample_{uuid.uuid4().hex[:8]}.mp3"
-    save_path = os.path.join(state.AUDIO_DIR, filename)
-    edge_tts_path = os.path.join(os.path.dirname(sys.executable), "edge-tts")
+    lang_prefix = state.get_language_prefix(voice_type)
+    filename = f"preview_{lang_prefix}_{uuid.uuid4().hex[:10]}.mp3"
+    save_path = os.path.join(state.TTS_CACHE_DIR, filename)
     
     try:
-        res = subprocess.run([edge_tts_path, "--text", tts_text, "--voice", voice_id, "--write-media", save_path], 
-                             capture_output=True, text=True, encoding='utf-8')
+        cmd = [sys.executable, "-m", "edge_tts", "--text", tts_text, "--voice", voice_id, "--write-media", save_path]
+        res = subprocess.run(cmd, capture_output=True, text=True, encoding='utf-8')
         if res.returncode != 0:
             raise Exception(f"edge-tts failed: {res.stderr}")
     except Exception as e:
         raise Exception(str(e))
     return save_path
 
-def handle_tts_action_review(action, transcript, voice_type, gender):
-    if action == "Read":
+def handle_tts_action_review(action, transcript, voice_type, gender, current_lang):
+    if action == "Generate":
         try:
-            save_path = generate_tts_audio_file_review(transcript, voice_type, gender)
-            filename = os.path.basename(save_path)
-            html_player = f'<audio autoplay src="/data/raw/audio/{filename}"></audio>'
-            return html_player, gr.update(), gr.update(), None
-        except Exception as e:
-            safe_err = f"Error reading voice: {str(e)}"
-            print(safe_err.encode('utf-8', errors='replace').decode('utf-8'))
-            return "", gr.update(), gr.update(), None
-    elif action == "Generate":
-        try:
-            save_path = generate_tts_audio_file_review(transcript, voice_type, gender)
+            save_path = generate_tts_audio_file_review(transcript, voice_type, gender, language_hint=current_lang)
             msg = "Auto-generated audio successfully. Click 'Overwrite Audio' below to save."
             return "", save_path, msg, None
         except Exception as e:
             error_msg = f"Error generating voice: {str(e)}"
             print(error_msg.encode('utf-8', errors='replace').decode('utf-8'))
             return "", gr.update(), error_msg.encode('utf-8', errors='replace').decode('utf-8'), None
+    elif action == "Clear Cache":
+        deleted = state.clear_tts_cache()
+        msg = f"🧹 TTS cache cleared ({deleted} temporary files removed)."
+        return "", gr.update(), msg, None
     return "", gr.update(), gr.update(), None
 
 def get_sentence_choices():
@@ -76,17 +93,29 @@ def get_sentence_choices():
         choices.append(f"[{i}] {rec[1]}")
     return choices
 
+def get_default_tts_voice_for_lang(lang):
+    clean = state.get_clean_language_name(lang)
+    if clean == "English":
+        return "English"
+    elif clean == "Chakma":
+        return "Chakma (BD)"
+    elif clean == "Pali":
+        return "Pali (LK Sinhala style)"
+    return "Bangla (BD)"
+
 def load_selected_sentence(choice):
     if not choice:
-        return None, "No selection", "", "Unknown", "Ready"
+        return None, "No selection", "", "Unknown", "Ready", gr.update()
     idx = int(choice.split("]")[0].replace("[", ""))
     records = state.get_recorded_manifest()
     if idx < len(records):
         rec = records[idx]
         path, trans, lang, rec_status = rec
+        clean_lang = state.get_clean_language_name(lang)
         abs_path = os.path.join(state.PROJECT_ROOT, path)
-        return abs_path, f"Selected: {trans}", trans, lang, rec_status
-    return None, "Error loading", "", "Unknown", "Ready"
+        default_voice = get_default_tts_voice_for_lang(clean_lang)
+        return abs_path, f"Selected: {trans}", trans, clean_lang, rec_status, default_voice
+    return None, "Error loading", "", "Unknown", "Ready", gr.update()
 
 def update_voice_details(choice, new_trans, new_lang, new_status):
     if not choice:
@@ -112,12 +141,18 @@ def overwrite_audio(choice, new_audio):
         idx = int(choice.split("]")[0].replace("[", ""))
         records = state.get_recorded_manifest()
         if idx < len(records):
-            old_rel_path, trans = records[idx][:2]
-            abs_path = os.path.join(state.PROJECT_ROOT, old_rel_path)
+            old_rel_path, trans, lang, current_status = records[idx]
             
-            # Normalize and Overwrite the exact same file
-            sr, data = state.normalize_audio(new_audio)
-            wavfile.write(abs_path, sr, data)
+            is_tts = False
+            if isinstance(new_audio, str):
+                abs_audio = os.path.abspath(new_audio).lower()
+                norm_cache = os.path.abspath(state.TTS_CACHE_DIR).lower()
+                norm_tts = os.path.abspath(state.TTS_AUDIO_DIR).lower()
+                if norm_cache in abs_audio or norm_tts in abs_audio or "tts" in os.path.basename(abs_audio) or abs_audio.endswith(".mp3"):
+                    is_tts = True
+                    
+            new_rel_path, new_abs_path = state.save_audio_file(new_audio, is_tts=is_tts, language=lang)
+            state.record_audio_entry(new_rel_path, trans, lang, status=current_status, is_tts=is_tts)
             
             return f"Successfully overwritten audio for: {trans}"
     except Exception as e:
@@ -141,11 +176,11 @@ def render():
             edit_status = gr.Dropdown(choices=["Ready", "Needs Review", "Rejected"], label="Status", scale=1)
         update_details_btn = gr.Button("Update Details")
             
-        with gr.Row(variant="panel"):
+        with gr.Row():
             tts_choices = ["Chakma (BD)", "Pali (LK Sinhala style)", "Pali (IN Hindi style)", "Bangla (BD)", "Bangla (IN)", "English"]
             tts_voice_dropdown = gr.Dropdown(choices=tts_choices, value="Bangla (BD)", label="TTS Language", scale=2)
             tts_gender = gr.Radio(choices=["Male", "Female"], value="Male", label="TTS Gender", scale=2)
-            tts_action = gr.Radio(choices=["Read", "Generate"], label="TTS Voice", scale=2)
+            tts_action = gr.Radio(choices=["Generate", "Clear Cache"], label="TTS Voice", scale=2, elem_classes=["tts-action-buttons"])
                         
         read_audio_player = gr.HTML(visible=False)
 
@@ -160,7 +195,7 @@ def render():
         sentence_dropdown.change(
             fn=load_selected_sentence, 
             inputs=[sentence_dropdown], 
-            outputs=[existing_audio_playback, review_status, edit_transcript, edit_language, edit_status]
+            outputs=[existing_audio_playback, review_status, edit_transcript, edit_language, edit_status, tts_voice_dropdown]
         )
         
         update_details_btn.click(
@@ -171,7 +206,7 @@ def render():
         
         tts_action.change(
             fn=handle_tts_action_review,
-            inputs=[tts_action, edit_transcript, tts_voice_dropdown, tts_gender],
+            inputs=[tts_action, edit_transcript, tts_voice_dropdown, tts_gender, edit_language],
             outputs=[read_audio_player, rerecord_input, review_status, tts_action]
         )
         
@@ -184,7 +219,7 @@ def render():
         ).then(
             fn=load_selected_sentence, 
             inputs=[sentence_dropdown], 
-            outputs=[existing_audio_playback, review_status, edit_transcript, edit_language, edit_status]
+            outputs=[existing_audio_playback, review_status, edit_transcript, edit_language, edit_status, tts_voice_dropdown]
         )
         
     return sentence_dropdown

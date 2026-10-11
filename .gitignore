@@ -66,3 +66,6 @@ embedded/tflite_models/*
 .Trashes
 ehthumbs.db
 Thumbs.db
+
+# Scratch testing scripts
+scratch/
