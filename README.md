@@ -28,6 +28,10 @@ Kabil-Voice-Assistant/
 └── scripts/         # Utility scripts for data collection and training pipelines
 ```
 
+## Quick Start & Setup
+For detailed step-by-step setup, running the application, corpus expansion, and contribution rules, check out our **[SETUP&GUIDELINE.md](SETUP&GUIDELINE.md)**.
+
 ## Getting Involved
 This project is fully open-source and we welcome contributors of all backgrounds—whether you are a native Chakma speaker, a Pali scholar, a Data Scientist, or a hardware enthusiast!
-Please refer to our [CONTRIBUTING.md](CONTRIBUTING.md) for details on how to get started.
+Please refer to our [CONTRIBUTING.md](CONTRIBUTING.md) and [SETUP&GUIDELINE.md](SETUP&GUIDELINE.md) for details on how to get started.
+

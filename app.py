@@ -12,9 +12,10 @@ if PROJECT_ROOT not in sys.path:
     sys.path.append(PROJECT_ROOT)
 
 from components import tab1_record, tab2_review, tab3_player
+from components.tab1_record import get_current_sentence_display, resolve_category, get_tts_language_for_category
 from components.tab2_review import get_sentence_choices
 
-def load_from_url(request: gr.Request):
+def load_from_url(tab1_category, request: gr.Request):
     tab_sel = "tab-1"
     choice_sel = None
     choices = get_sentence_choices()
@@ -36,7 +37,11 @@ def load_from_url(request: gr.Request):
             except ValueError:
                 pass
                 
-    return gr.update(selected=tab_sel), gr.update(value=choice_sel, choices=choices)
+    resolved_cat = resolve_category(tab1_category)
+    sentence_html = get_current_sentence_display(resolved_cat)
+    tts_lang = get_tts_language_for_category(resolved_cat)
+    return gr.update(selected=tab_sel), gr.update(value=choice_sel, choices=choices), gr.update(value=resolved_cat), sentence_html, gr.update(value=tts_lang)
+
 
 css = """
 .audio-container { position: relative !important; }
@@ -529,6 +534,116 @@ html, body, * {
     font-size: 13px !important;
     font-weight: 500 !important;
 }
+
+/* Pop-up Modal Dialog Styling */
+.modal-overlay:not(.hide-container):not(.hidden):not([style*="display: none"]) {
+    position: fixed !important;
+    top: 0 !important;
+    left: 0 !important;
+    width: 100vw !important;
+    height: 100vh !important;
+    background: rgba(0, 0, 0, 0.72) !important;
+    backdrop-filter: blur(5px) !important;
+    -webkit-backdrop-filter: blur(5px) !important;
+    z-index: 99999 !important;
+    display: flex !important;
+    align-items: center !important;
+    justify-content: center !important;
+    padding: 20px !important;
+    box-sizing: border-box !important;
+}
+
+.modal-overlay.hide-container,
+.modal-overlay.hidden,
+.modal-overlay[style*="display: none"] {
+    display: none !important;
+}
+
+.modal-card {
+    background: var(--background-fill-primary, #18181b) !important;
+    border: 1px solid var(--border-color-primary, #3f3f46) !important;
+    border-radius: 12px !important;
+    padding: 24px !important;
+    width: 100% !important;
+    max-width: 650px !important;
+    box-shadow: 0 25px 50px -12px rgba(0, 0, 0, 0.7) !important;
+    margin: auto !important;
+}
+
+.modal-header {
+    display: flex !important;
+    align-items: center !important;
+    margin-bottom: 4px !important;
+}
+
+.modal-header h3 {
+    margin: 0 !important;
+}
+
+/* Remove outer borders around text input fields in modal */
+.modal-card .gradio-textbox,
+.modal-card .block,
+.modal-card .wrap,
+.modal-card [data-testid="textbox"] {
+    border: none !important;
+    box-shadow: none !important;
+    background: transparent !important;
+}
+
+.modal-card .gradio-textbox textarea,
+.modal-card .gradio-textbox input {
+    border: none !important;
+    outline: none !important;
+    box-shadow: none !important;
+    background: var(--background-fill-secondary, #27272a) !important;
+    border-radius: 8px !important;
+    padding: 10px 14px !important;
+}
+
+.modal-card .gradio-textbox textarea:focus,
+.modal-card .gradio-textbox input:focus {
+    border: none !important;
+    outline: none !important;
+    box-shadow: none !important;
+}
+
+/* Tab 2: Remove divider line between Transcript and Context */
+#edit_voice_details_group #tab2_trans_ctx_box,
+#edit_voice_details_group .trans-ctx-box {
+    gap: 0 !important;
+    padding: 0 !important;
+    border: none !important;
+    background: transparent !important;
+}
+
+#edit_voice_details_group #tab2_trans_ctx_box > *,
+#edit_voice_details_group #tab2_trans_ctx_box .form,
+#edit_voice_details_group #tab2_trans_ctx_box .form > * {
+    gap: 0 !important;
+    border-top: none !important;
+    border-bottom: none !important;
+    box-shadow: none !important;
+}
+
+#edit_voice_details_group #tab2_transcript_input {
+    border-bottom: none !important;
+    border-bottom-width: 0 !important;
+    border-bottom-left-radius: 0 !important;
+    border-bottom-right-radius: 0 !important;
+    margin-bottom: 0 !important;
+}
+
+#edit_voice_details_group #tab2_context_input {
+    border-top: none !important;
+    border-top-width: 0 !important;
+    border-top-left-radius: 0 !important;
+    border-top-right-radius: 0 !important;
+    margin-top: 0 !important;
+}
+
+#edit_voice_details_group #tab2_context_input label {
+    margin-top: 4px !important;
+}
 """
 
 init_pagination_js = """
@@ -613,11 +728,16 @@ with gr.Blocks(title="Kabil Data Collector", css=css, theme=gr.themes.Default(pr
         gr.Markdown("# 🎙️ Kabil Audio Data Collection")
     
     with gr.Tabs() as tabs:
-        tab1_record.render()
+        tab1_cat, tab1_display, tab1_tts_voice = tab1_record.render()
         sentence_dropdown = tab2_review.render()
         voice_table = tab3_player.render(demo, tabs, sentence_dropdown)
             
-    demo.load(fn=load_from_url, inputs=None, outputs=[tabs, sentence_dropdown], js=init_pagination_js)
+    demo.load(
+        fn=load_from_url, 
+        inputs=[tab1_cat], 
+        outputs=[tabs, sentence_dropdown, tab1_cat, tab1_display, tab1_tts_voice], 
+        js=init_pagination_js
+    )
 
 
 # Build FastAPI App

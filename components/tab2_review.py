@@ -20,41 +20,16 @@ def get_edge_tts_voice(voice_type, gender):
         return "hi-IN-SwaraNeural" if gender == "Female" else "hi-IN-MadhurNeural"
     return "bn-BD-NabanitaNeural"
 
-def generate_tts_audio_file_review(transcript, voice_type, gender, language_hint=None):
+def generate_tts_audio_file_review(transcript, voice_type, gender, language_hint=None, context_hint=None):
     if not transcript:
         raise Exception("Transcript is empty.")
     
-    tts_text = transcript
-    found_context = None
-
-    import unicodedata
-    def _norm(s):
-        return unicodedata.normalize('NFC', s.replace(" ", "").strip())
-
-    trans_norm = _norm(transcript)
-
-    # Search for context corresponding to this transcript
-    for cat_name, sents in state.sentences_by_category.items():
-        for t, c in sents:
-            if t.strip() == transcript.strip() or _norm(t) == trans_norm:
-                found_context = c
-                break
-        if found_context:
-            break
-
-    # If voice is Bengali or Chakma, check for Bengali transliteration
-    if "Bangla" in voice_type or "Chakma" in voice_type or "Bengali" in voice_type:
-        if found_context and "(" in found_context and "|" in found_context:
-            tts_text = found_context.split("|")[0].replace("(", "").strip()
-    elif "English" in voice_type:
-        # If the transcript itself is not English (e.g. Chakma/Bengali/Pali script), use English translation if available
-        if found_context and "—" in found_context:
-            tts_text = found_context.split("—")[-1].strip()
-    elif "Pali" in voice_type:
-        # For Pali, Sinhala or Hindi voices can read Pali Latin or Sinhala text
-        if found_context and "(" in found_context and "|" in found_context:
-            # Often first part in parenthesis is Bengali or Romanized Pali
-            pass
+    tts_text = state.resolve_tts_spoken_text(
+        transcript, 
+        context=context_hint,
+        voice_type=voice_type, 
+        category_or_lang=language_hint
+    )
 
     voice_id = get_edge_tts_voice(voice_type, gender)
     lang_prefix = state.get_language_prefix(voice_type)
@@ -65,15 +40,25 @@ def generate_tts_audio_file_review(transcript, voice_type, gender, language_hint
         cmd = [sys.executable, "-m", "edge_tts", "--text", tts_text, "--voice", voice_id, "--write-media", save_path]
         res = subprocess.run(cmd, capture_output=True, text=True, encoding='utf-8')
         if res.returncode != 0:
-            raise Exception(f"edge-tts failed: {res.stderr}")
+            err = res.stderr.strip()
+            # If edge-tts failed with NoAudioReceived and text has non-ASCII glyphs, retry with phonetics
+            if "NoAudioReceived" in err and not tts_text.isascii():
+                fallback_text = state.chakma_to_bengali(transcript)
+                fallback_cmd = [sys.executable, "-m", "edge_tts", "--text", fallback_text, "--voice", "bn-BD-PradeepNeural", "--write-media", save_path]
+                res2 = subprocess.run(fallback_cmd, capture_output=True, text=True, encoding='utf-8')
+                if res2.returncode == 0:
+                    return save_path
+            raise Exception(f"edge-tts failed: {err}")
     except Exception as e:
         raise Exception(str(e))
     return save_path
 
-def handle_tts_action_review(action, transcript, voice_type, gender, current_lang):
+def handle_tts_action_review(action, transcript, context, voice_type, gender, current_lang):
     if action == "Generate":
         try:
-            save_path = generate_tts_audio_file_review(transcript, voice_type, gender, language_hint=current_lang)
+            if not voice_type:
+                voice_type = get_default_tts_voice_for_lang(current_lang)
+            save_path = generate_tts_audio_file_review(transcript, voice_type, gender, language_hint=current_lang, context_hint=context)
             msg = "Auto-generated audio successfully. Click 'Overwrite Audio' below to save."
             return "", save_path, msg, None
         except Exception as e:
@@ -105,7 +90,7 @@ def get_default_tts_voice_for_lang(lang):
 
 def load_selected_sentence(choice):
     if not choice:
-        return None, "No selection", "", "Unknown", "Ready", gr.update()
+        return None, "No selection", "", "", "Unknown", "Ready", gr.update()
     idx = int(choice.split("]")[0].replace("[", ""))
     records = state.get_recorded_manifest()
     if idx < len(records):
@@ -114,24 +99,30 @@ def load_selected_sentence(choice):
         clean_lang = state.get_clean_language_name(lang)
         abs_path = os.path.join(state.PROJECT_ROOT, path)
         default_voice = get_default_tts_voice_for_lang(clean_lang)
-        return abs_path, f"Selected: {trans}", trans, clean_lang, rec_status, default_voice
-    return None, "Error loading", "", "Unknown", "Ready", gr.update()
+        context = state.get_context_for_transcript(trans, clean_lang)
+        return abs_path, f"Selected: {trans}", trans, context, clean_lang, rec_status, default_voice
+    return None, "Error loading", "", "", "Unknown", "Ready", gr.update()
 
-def update_voice_details(choice, new_trans, new_lang, new_status):
+def update_voice_details(choice, new_trans, new_context, new_lang, new_status):
     if not choice:
         return "No track selected."
     try:
         idx = int(choice.split("]")[0].replace("[", ""))
         records = state.get_recorded_manifest()
         if idx < len(records):
+            old_trans = records[idx][1]
             records[idx][1] = new_trans
             records[idx][2] = new_lang
             records[idx][3] = new_status
             state.save_manifest(records)
-            gr.Info("✅ Updated successfully!")
-            return f"✅ Updated successfully! (Track {idx})"
+            
+            # Update raw sentence and context in data/raw files if applicable
+            state.update_raw_sentence(new_lang, old_trans, new_trans, new_context)
+            
+            gr.Info("Updated successfully!")
+            return f"Updated successfully! (Track {idx})"
     except Exception as e:
-        return f"❌ Error updating: {str(e)}"
+        return f"Error updating: {str(e)}"
     return "Failed to update."
 
 def overwrite_audio(choice, new_audio):
@@ -170,10 +161,13 @@ def render():
             existing_audio_playback = gr.Audio(label="Current Audio", interactive=False, type="filepath")
         
         gr.Markdown("### Edit Voice Details")
-        with gr.Row():
-            edit_transcript = gr.Textbox(label="Transcript", scale=2)
-            edit_language = gr.Dropdown(choices=["Chakma", "Pali", "Bengali", "English", "Unknown"], label="Language", scale=1)
-            edit_status = gr.Dropdown(choices=["Ready", "Needs Review", "Rejected"], label="Status", scale=1)
+        with gr.Group(elem_id="edit_voice_details_group"):
+            with gr.Row():
+                edit_language = gr.Dropdown(choices=["Chakma", "Pali", "Bengali", "English", "Unknown"], label="Language", scale=1)
+                edit_status = gr.Dropdown(choices=["Ready", "Needs Review", "Rejected"], label="Status", scale=1)
+            with gr.Column(elem_id="tab2_trans_ctx_box", elem_classes=["trans-ctx-box"]):
+                edit_transcript = gr.Textbox(label="Transcript", lines=1, max_lines=1, elem_id="tab2_transcript_input")
+                edit_context = gr.Textbox(label="Context", lines=2, max_lines=6, placeholder="Context / transliteration / meaning...", elem_id="tab2_context_input")
         update_details_btn = gr.Button("Update Details")
             
         with gr.Row():
@@ -195,18 +189,24 @@ def render():
         sentence_dropdown.change(
             fn=load_selected_sentence, 
             inputs=[sentence_dropdown], 
-            outputs=[existing_audio_playback, review_status, edit_transcript, edit_language, edit_status, tts_voice_dropdown]
+            outputs=[existing_audio_playback, review_status, edit_transcript, edit_context, edit_language, edit_status, tts_voice_dropdown]
+        )
+
+        edit_language.change(
+            fn=get_default_tts_voice_for_lang,
+            inputs=[edit_language],
+            outputs=[tts_voice_dropdown]
         )
         
         update_details_btn.click(
             fn=update_voice_details,
-            inputs=[sentence_dropdown, edit_transcript, edit_language, edit_status],
+            inputs=[sentence_dropdown, edit_transcript, edit_context, edit_language, edit_status],
             outputs=[review_status]
         )
         
         tts_action.change(
             fn=handle_tts_action_review,
-            inputs=[tts_action, edit_transcript, tts_voice_dropdown, tts_gender, edit_language],
+            inputs=[tts_action, edit_transcript, edit_context, tts_voice_dropdown, tts_gender, edit_language],
             outputs=[read_audio_player, rerecord_input, review_status, tts_action]
         )
         
@@ -219,7 +219,7 @@ def render():
         ).then(
             fn=load_selected_sentence, 
             inputs=[sentence_dropdown], 
-            outputs=[existing_audio_playback, review_status, edit_transcript, edit_language, edit_status, tts_voice_dropdown]
+            outputs=[existing_audio_playback, review_status, edit_transcript, edit_context, edit_language, edit_status, tts_voice_dropdown]
         )
         
     return sentence_dropdown

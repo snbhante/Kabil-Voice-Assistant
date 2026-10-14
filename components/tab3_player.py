@@ -67,15 +67,19 @@ def on_fullscreen_sync(lang, search, is_fs):
 def play_track(idx):
     records = state.get_recorded_manifest()
     if idx < 0 or idx >= len(records):
-        return None, "No track selected.", gr.update(interactive=False), idx
+        return None, "", "", gr.update(interactive=False), idx
     
     rec = records[idx]
     abs_path = os.path.join(state.PROJECT_ROOT, rec[0])
     trans = rec[1]
+    lang = rec[2] if len(rec) > 2 else "Unknown"
+    clean_lang = state.get_clean_language_name(lang)
+    context = state.get_context_for_transcript(trans, clean_lang)
     
     if os.path.exists(abs_path):
-        return abs_path, f"Playing: {trans}", gr.update(interactive=True), idx
-    return None, "Audio file not found.", gr.update(interactive=False), idx
+        return abs_path, trans, context, gr.update(interactive=True), idx
+    gr.Warning(f"Audio file not found: {os.path.basename(abs_path)}")
+    return None, trans, context, gr.update(interactive=False), idx
 
 def play_prev(idx):
     if idx > 0:
@@ -90,7 +94,7 @@ def play_next(idx):
 
 def load_audio_from_table(evt: gr.SelectData, current_data):
     if current_data is None:
-        return None, "Error", gr.update(interactive=False), -1
+        return None, "", "", gr.update(interactive=False), -1
     
     try:
         if hasattr(current_data, "iloc"):
@@ -100,7 +104,7 @@ def load_audio_from_table(evt: gr.SelectData, current_data):
         else:
             row = current_data[evt.index[0]]
     except Exception as e:
-        return None, f"Data Error: {str(e)}", gr.update(interactive=False), -1
+        return None, "", "", gr.update(interactive=False), -1
     
     filename = row[3]
     records = state.get_recorded_manifest()
@@ -160,7 +164,8 @@ def render(demo, tabs_component, dropdown_component):
                     next_btn = gr.Button("⏭", elem_id="next_btn", elem_classes=["overlay-icon", "next-icon"])
                     edit_voice_btn = gr.Button("Review", elem_id="review_btn", elem_classes=["overlay-icon", "review-icon"])
             with gr.Column(scale=1):
-                play_status = gr.Textbox(label="Track Info", interactive=False)
+                play_transcript = gr.Textbox(label="Transcript", interactive=False, lines=1, max_lines=2)
+                play_context = gr.Textbox(label="Context", interactive=False, lines=2, max_lines=5)
             
         selected_global_idx = gr.State(-1)
             
@@ -220,19 +225,19 @@ def render(demo, tabs_component, dropdown_component):
         voice_table.select(
             fn=load_audio_from_table, 
             inputs=[voice_table], 
-            outputs=[selected_audio, play_status, edit_voice_btn, selected_global_idx]
+            outputs=[selected_audio, play_transcript, play_context, edit_voice_btn, selected_global_idx]
         )
         
         prev_btn.click(
             fn=play_prev,
             inputs=[selected_global_idx],
-            outputs=[selected_audio, play_status, edit_voice_btn, selected_global_idx]
+            outputs=[selected_audio, play_transcript, play_context, edit_voice_btn, selected_global_idx]
         )
         
         next_btn.click(
             fn=play_next,
             inputs=[selected_global_idx],
-            outputs=[selected_audio, play_status, edit_voice_btn, selected_global_idx]
+            outputs=[selected_audio, play_transcript, play_context, edit_voice_btn, selected_global_idx]
         )
         
         edit_voice_btn.click(
